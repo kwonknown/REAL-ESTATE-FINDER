@@ -1,121 +1,141 @@
 import streamlit as st
-import random
 import pandas as pd
-import os
-from datetime import datetime
+from PublicDataReader import TransactionPrice
 
-# --- [수정] 1. 모든 함수 정의를 최상단으로 배치 (NameError 완벽 해결) ---
+# 1. 페이지 설정 및 제목
+st.set_page_config(page_title="노운's 부동산 탐지기", layout="wide")
+st.title("🏠 권노운의 실거래가 기반 급매 탐지 대시보드")
 
-@st.cache_data
-def load_lotto_data():
-    """CSV 데이터를 안전하게 불러오기"""
-    file_path = 'lotto_data.csv'
-    if os.path.exists(file_path):
-        try:
-            df = pd.read_csv(file_path)
-            if not df.empty and '회차' in df.columns:
-                return df
-        except: pass
-    return None
-
-def get_max_consecutive(nums):
-    """연속 번호 계산 로직"""
-    nums = sorted(nums)
-    max_con, current_con = 1, 1
-    for i in range(len(nums) - 1):
-        if nums[i] + 1 == nums[i+1]:
-            current_con += 1
-        else:
-            max_con = max(max_con, current_con)
-            current_con = 1
-    return max(max_con, current_con)
-
-@st.cache_data
-def estimate_combination_count(settings_tuple):
-    """사용자 설정 시 확률 실시간 계산 (캐싱)"""
-    total_combinations = 8145060
-    sample_size = 3000
-    pass_count = 0
-    s_sum, s_odds, s_con, s_low = settings_tuple
-    for _ in range(sample_size):
-        nums = sorted(random.sample(range(1, 46), 6))
-        if not (s_sum[0] <= sum(nums) <= s_sum[1]): continue
-        if sum(1 for n in nums if n % 2 != 0) not in s_odds: continue
-        if get_max_consecutive(nums) > s_con: continue
-        if sum(1 for n in nums if n <= 22) not in s_low: continue
-        pass_count += 1
-    rate = pass_count / sample_size
-    return int(total_combinations * rate), rate
-
-def generate_lotto_combination(settings):
-    """필터 통과 번호 생성"""
-    while True:
-        nums = sorted(random.sample(range(1, 46), 6))
-        if not (settings['sum'][0] <= sum(nums) <= settings['sum'][1]): continue
-        if sum(1 for n in nums if n % 2 != 0) not in settings['odds']: continue
-        if get_max_consecutive(nums) > settings['consecutive']: continue
-        if sum(1 for n in nums if n <= 22) not in settings['low_high']: continue
-        return nums
-
-# --- 2. UI 및 사이드바 설정 시작 ---
-st.set_page_config(page_title="Smart-Lotto-Strategy", layout="wide")
-st.title("🎰 Smart Lotto Strategy")
-
-if 'history' not in st.session_state:
-    st.session_state.history = []
-
-MODE_STATS = {
-    "보수": {"count": "약 142,000", "rate": "1.7%"},
-    "중간": {"count": "약 2,360,000", "rate": "29.0%"},
-    "공격": {"count": "약 5,850,000", "rate": "71.8%"}
+# 2. 지역 코드 데이터 (시군구 코드 매핑)
+# 추가하고 싶은 지역이 있다면 '법정동코드 5자리'를 찾아 추가하세요.
+REGION_DATA = {
+    "서울특별시": {
+        "노원구": "11350",
+        "동대문구": "11230",
+        "강남구": "11680",
+        "송파구": "11710",
+        "강동구": "11740",
+        "성동구": "11200"
+    },
+    "경기도": {
+        "구리시": "41310",
+        "남양주시": "41360",
+        "하남시": "41450",
+        "성남시 수정구": "41131",
+        "성남시 분당구": "41135",
+        "광명시": "41210"
+    }
 }
 
+# 3. 사이드바 - 설정 영역
 with st.sidebar:
-    st.header("⚙️ 생성 전략 설정")
-    mode = st.radio("전략 선택", ["보수", "중간", "공격", "사용자 설정"], index=1)
+    st.header("💰 자금 및 대출 설정")
+    salary = st.number_input("연봉 (원)", value=63300000)
+    interest_rate = st.slider("대출 금리 (%)", 3.0, 7.0, 4.5, 0.1)
     
-    if mode == "보수":
-        settings = {'sum':(120, 160), 'odds':[3], 'consecutive':3, 'low_high':[3]}
-        d_count, d_rate = MODE_STATS["보수"]["count"], MODE_STATS["보수"]["rate"]
-    elif mode == "중간":
-        settings = {'sum':(100, 175), 'odds':[2, 3, 4], 'consecutive':4, 'low_high':[2, 3, 4]}
-        d_count, d_rate = MODE_STATS["중간"]["count"], MODE_STATS["중간"]["rate"]
-    elif mode == "공격":
-        settings = {'sum':(80, 200), 'odds':[1, 2, 3, 4, 5], 'consecutive':5, 'low_high':[1, 2, 3, 4, 5]}
-        d_count, d_rate = MODE_STATS["공격"]["count"], MODE_STATS["공격"]["rate"]
-    else:
-        st.divider()
-        sum_r = st.slider("합계 범위", 21, 255, (100, 175))
-        con_l = st.number_input("연속수 제한", 1, 6, 4)
-        odd_l = st.multiselect("홀수 개수", [0,1,2,3,4,5,6], default=[2,3,4])
-        low_l = st.multiselect("저(1~22) 개수", [0,1,2,3,4,5,6], default=[2,3,4])
-        settings = {'sum': sum_r, 'odds': odd_l, 'consecutive': con_l, 'low_high': low_l}
-        
-        # [수정된 위치] 여기서 호출해야 오류가 안 납니다.
-        s_tup = (tuple(settings['sum']), tuple(settings['odds']), settings['consecutive'], tuple(settings['low_high']))
-        est_c, est_r = estimate_combination_count(s_tup)
-        d_count, d_rate = f"약 {est_c:,}", f"{est_r*100:.1f}%"
+    st.subheader("보유 자산 상세")
+    my_cash = st.number_input("실제 보유 현금 (원)", value=100000000)
+    severance_pay = st.number_input("퇴직금 예상액 (원)", value=50000000)
+    family_support = st.number_input("기타 지원금 (원)", value=50000000)
+    
+    total_cash = my_cash + severance_pay + family_support
+    st.info(f"총 가용 현금: {total_cash/100000000:.2f}억 원")
+    
+    st.divider()
+    
+    st.header("📍 지역 및 기간 선택")
+    # 시/도 선택에 따른 시/군/구 종속 선택
+    selected_sido = st.selectbox("시/도 선택", list(REGION_DATA.keys()))
+    sigungu_list = list(REGION_DATA[selected_sido].keys())
+    selected_sigungu = st.selectbox("시/군/구 선택", sigungu_list)
+    
+    # 데이터 업데이트 주기를 고려하여 기본값을 1~2개월 전으로 설정 권장
+    target_month = st.text_input("조회 월 (YYYYMM)", value="202512")
 
     st.divider()
-    st.metric("📊 전략의 희소성", d_rate)
-    st.write(f"전체 중 **{d_count}개**가 통과합니다.")
+    
+    # 🚀 분석 실행 버튼
+    launch_button = st.button("🚀 데이터 분석 런칭", use_container_width=True)
 
-# --- 3. 번호 생성 및 분석 섹션 ---
-if st.button("행운의 5조합 생성하기", use_container_width=True):
-    new_picks = [generate_lotto_combination(settings) for _ in range(5)]
-    st.session_state.history.insert(0, {"time": datetime.now().strftime("%H:%M:%S"), "mode": mode, "numbers": new_picks})
+# 4. 상단 요약 정보 (DSR 기반 예산 산출)
+# 원리금균등상환 30년, DSR 40% 기준 역산
+max_annual_pay = salary * 0.4
+monthly_rate = (interest_rate / 100) / 12
+total_months = 30 * 12
 
-if st.session_state.history:
-    latest = st.session_state.history[0]
-    st.subheader(f"✨ 최근 추천 ({latest['mode']})")
-    for combo in latest['numbers']:
-        st.write(combo)
-
-# --- 4. 데이터 로드 및 전수 조사 ---
-df_lotto = load_lotto_data()
-if df_lotto is not None:
-    st.success(f"✅ DB 연결 완료: 총 {len(df_lotto)}회차 데이터 로드")
+if monthly_rate > 0:
+    estimated_max_loan = (max_annual_pay / 12) * ((1 + monthly_rate)**total_months - 1) / (monthly_rate * (1 + monthly_rate)**total_months)
 else:
-    st.error("⚠️ 'lotto_data.csv' 파일이 없습니다. 바탕화면에서 파일을 만들어 깃허브에 올려주세요.")
+    estimated_max_loan = (max_annual_pay / 12) * total_months
 
-# (이후 분석 탭 로직 생략 - 구조는 동일)
+buyable_price = estimated_max_loan + total_cash
+
+st.success(f"✅ 권노운님의 현재 매수 가능 예산(자본+대출): 약 **{buyable_price/100000000:.2f}억 원**")
+
+# 5. 메인 분석 로직
+if launch_button:
+    service_key = st.secrets.get("SERVICE_KEY", None)
+    sigungu_code = REGION_DATA[selected_sido][selected_sigungu]
+
+    if not service_key:
+        st.warning("⚠️ 서비스 키가 등록되지 않았습니다. 샘플 데이터를 표시합니다.")
+        # 샘플 데이터 구성
+        df = pd.DataFrame({
+            '단지': [f'{selected_sigungu} 아파트A', f'{selected_sigungu} 아파트B', '단지C', '단지D'],
+            '전용면적': [59.9, 84.5, 59.8, 84.9],
+            '거래금액(만원)': [75000, 92000, 68000, 110000],
+            '층': [12, 5, 8, 20],
+            '년': [2025, 2025, 2025, 2025],
+            '월': [12, 12, 12, 12]
+        })
+    else:
+        try:
+            # API 호출
+            api = TransactionPrice(service_key)
+            df = api.get_data(
+                property_type="아파트",
+                trade_type="매매",
+                sigungu_code=sigungu_code,
+                year_month=target_month
+            )
+        except Exception as e:
+            st.error(f"🚨 API 데이터 로드 중 오류가 발생했습니다: {e}")
+            df = pd.DataFrame()
+
+    # 결과 시각화
+    if not df.empty:
+        st.subheader(f"📊 {selected_sido} {selected_sigungu} ({target_month}) 분석 결과")
+        
+        # 컬럼명 처리 (API 버전에 따라 다를 수 있음)
+        price_col = '거래금액' if '거래금액' in df.columns else '거래금액(만원)'
+        
+        # 숫자형 변환 (쉼표 제거 등)
+        if df[price_col].dtype == object:
+            df[price_col] = df[price_col].str.replace(',', '').astype(int)
+        
+        # 매수 가능 여부 판단 (만원 단위 환산)
+        df['매수성공가능'] = df[price_col].apply(lambda x: (x * 10000) <= buyable_price)
+        
+        # 하이라이트 함수
+        def highlight_buyable(row):
+            return ['background-color: #d4edda' if row['매수성공가능'] else '' for _ in row]
+
+        # 데이터프레임 출력
+        st.dataframe(
+            df.style.apply(highlight_buyable, axis=1),
+            use_container_width=True
+        )
+        
+        # 간단한 통계
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("조회된 거래 건수", f"{len(df)}건")
+        with col2:
+            buyable_count = df['매수성공가능'].sum()
+            st.metric("내 예산 안 매물", f"{buyable_count}건", delta=f"{buyable_count/len(df)*100:.1f}%")
+            
+    else:
+        st.info(f"🧐 {target_month}월에는 {selected_sigungu} 지역에 신고된 거래 데이터가 없습니다. 한두 달 전으로 조회해 보세요.")
+
+else:
+    st.info("👈 왼쪽 사이드바에서 조건을 설정한 후 '분석 런칭' 버튼을 눌러주세요.")
